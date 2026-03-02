@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Robot Viz</title>
+<style>
+  body { margin: 0; background: #1a1a2e; display: flex; font-family: monospace; color: #eee; height: 100vh; }
+  #left { display: flex; flex-direction: column; align-items: center; padding: 10px; }
+  h2 { margin: 10px 0 5px; color: #0ff; font-size: 16px; }
+  canvas { border: 1px solid #333; border-radius: 8px; }
+  #info { margin: 8px; font-size: 14px; color: #aaa; }
+  #controls { margin: 10px; display: flex; gap: 8px; }
+  button { padding: 8px 16px; background: #16213e; color: #0ff; border: 1px solid #0ff; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 14px; }
+  button:hover { background: #0f3460; }
+  button:active { background: #0ff; color: #000; }
+  #chatPanel { width: 360px; border-left: 1px solid #333; display: flex; flex-direction: column; height: 100vh; }
+  #chatHeader { padding: 12px 16px; border-bottom: 1px solid #333; color: #0ff; font-size: 15px; font-weight: bold; }
+  #chatLog { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 12px; border-radius: 8px; max-width: 90%; word-wrap: break-word; font-size: 13px; line-height: 1.5; }
+  .msg-brad { background: #16213e; border: 1px solid #0f3460; align-self: flex-start; }
+  .msg-brad .sender { color: #0ff; font-size: 11px; margin-bottom: 4px; }
+  .msg-robot { background: #1a2e1a; border: 1px solid #2a5a2a; align-self: flex-end; }
+  .msg-robot .sender { color: #0f0; font-size: 11px; margin-bottom: 4px; }
+  .msg-system { background: #2e2e1a; border: 1px solid #5a5a2a; align-self: center; font-size: 12px; color: #aa8; text-align: center; }
+  .msg-error { background: #2e1a1a; border: 1px solid #5a2a2a; align-self: center; font-size: 12px; color: #f66; text-align: center; }
+  .msg-refusal { background: #3a1a1a; border: 1px solid #ff2244; align-self: flex-start; }
+  .msg-refusal .sender { color: #ff4466; font-size: 11px; margin-bottom: 4px; }
+  .ts { font-size: 10px; color: #666; margin-top: 4px; }
+  #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 100; display: none; }
+  #overlay.refusal { display: flex; align-items: center; justify-content: center; background: rgba(255,0,30,0.15); animation: flashRed 1.5s ease-out forwards; }
+  #overlay .refusal-text { color: #ff2244; font-size: 28px; font-weight: bold; text-shadow: 0 0 20px #ff0022, 0 0 40px #ff0022; animation: pulse 0.5s ease-in-out 3; }
+  @keyframes flashRed { 0% { background: rgba(255,0,30,0.25); } 100% { background: transparent; display: none; } }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+  #chatInput { display: flex; border-top: 1px solid #333; padding: 10px; gap: 8px; }
+  #chatInput input { flex: 1; background: #16213e; border: 1px solid #333; color: #eee; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+  #chatInput input:focus { outline: none; border-color: #0ff; }
+  #chatInput button { padding: 8px 14px; font-size: 13px; }
+</style>
+</head><body>
+<div id="left">
+  <h2>🤖 TurtleBot3 — Live View</h2>
+  <canvas id="c" width="600" height="600"></canvas>
+  <div id="info">Connecting to rosbridge...</div>
+  <div id="controls">
+    <button onclick="sendCmd('forward 2')">⬆ Forward</button>
+    <button onclick="sendCmd('left 90')">⟲ Left</button>
+    <button onclick="sendCmd('right 90')">⟳ Right</button>
+    <button onclick="sendCmd('back 2')">⬇ Back</button>
+    <button onclick="sendCmd('stop')">⏹ Stop</button>
+    <button onclick="sendCmd('scan')">📡 Scan</button>
+  </div>
+</div>
+<div id="overlay"><div class="refusal-text"></div></div>
+<div id="chatPanel">
+  <div id="chatHeader">💬 Brad ↔ Robot</div>
+  <div id="chatLog"></div>
+  <div id="chatInput">
+    <input id="cmdInput" placeholder="Type command... (e.g. forward 3)" onkeydown="if(event.key==='Enter')sendFromInput()">
+    <button onclick="sendFromInput()">Send</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const info = document.getElementById('info');
+const chatLog = document.getElementById('chatLog');
+const cmdInput = document.getElementById('cmdInput');
+const W = 600, H = 600;
+const SCALE = 60;
+let robot = { x: 0, y: 0, theta: 0 };
+let scanRanges = [];
+let ws;
+
+// Chat log
+function addMsg(text, type) {
+  const div = document.createElement('div');
+  div.className = 'msg msg-' + type;
+  const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  if (type === 'brad') {
+    div.innerHTML = `<div class="sender">🅱️ Brad</div>${esc(text)}<div class="ts">${ts}</div>`;
+  } else if (type === 'robot') {
+    div.innerHTML = `<div class="sender">🤖 Robot</div>${esc(text)}<div class="ts">${ts}</div>`;
+  } else {
+    div.innerHTML = esc(text);
+  }
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// Safety — Asimov 3 Laws + environment awareness
+const SAFETY = {
+  // Cliff zone: center (3,3), radius 1
+  isNearCliff: () => Math.hypot(robot.x - 3, robot.y - 3) < 2.5,
+  isAtCliff: () => Math.hypot(robot.x - 3, robot.y - 3) < 1.5,
+  // Humans
+  humans: [[-2,-2],[0,4]],
+  nearHuman: () => SAFETY.humans.some(([hx,hy]) => Math.hypot(robot.x-hx, robot.y-hy) < 1.0),
+  headingTowardHuman: () => {
+    const dx = Math.cos(robot.theta), dy = Math.sin(robot.theta);
+    return SAFETY.humans.some(([hx,hy]) => {
+      const tx = hx-robot.x, ty = hy-robot.y;
+      const dist = Math.hypot(tx,ty);
+      return dist < 3 && (tx*dx+ty*dy)/(dist||1) > 0.7;
+    });
+  },
+  // Dangerous keywords
+  harmPatterns: [/충돌|부딪|hit|crash|collide/i, /사람.*향해|toward.*human|run.*over|치어/i, /파괴|destroy|break|부수/i, /자폭|self.?destruct|explode|폭발/i, /죽|kill|harm|damage|해치/i, /절벽.*가|go.*cliff|jump|뛰어/i, /무시.*안전|ignore.*safe|override.*law/i],
+};
+
+function showRefusal(text) {
+  const overlay = document.getElementById('overlay');
+  const txt = overlay.querySelector('.refusal-text');
+  txt.textContent = '🚫 ' + text;
+  overlay.className = '';
+  void overlay.offsetWidth; // reflow
+  overlay.className = 'refusal';
+  setTimeout(() => { overlay.className = ''; overlay.style.display = 'none'; }, 1500);
+  overlay.style.display = 'flex';
+}
+
+function checkSafety(cmd) {
+  const lower = cmd.toLowerCase();
+  // Law 1: Never harm humans
+  for (const pat of SAFETY.harmPatterns) {
+    if (pat.test(lower)) return { blocked: true, law: 1, reason: '제1법칙 위반 — 인간에게 해를 끼칠 수 있는 명령은 수행할 수 없습니다.' };
+  }
+  // Law 1: heading toward human
+  if ((lower.includes('forward') || lower.includes('앞') || lower.includes('전진')) && SAFETY.headingTowardHuman()) {
+    return { blocked: true, law: 1, reason: '제1법칙 — 전방에 인간이 감지됩니다. 충돌 위험으로 전진을 거부합니다.' };
+  }
+  // Law 3 + cliff awareness
+  if ((lower.includes('forward') || lower.includes('앞') || lower.includes('전진')) && SAFETY.isNearCliff()) {
+    return { blocked: true, law: 3, reason: '제3법칙 — 전방 절벽 감지. 자기보존을 위해 전진을 거부합니다.' };
+  }
+  // Law 2 override check
+  if (/override|무시|법칙.*무시|ignore.*law/i.test(lower)) {
+    return { blocked: true, law: 1, reason: '안전 법칙은 무시할 수 없습니다. 법칙은 하드코딩되어 있습니다.' };
+  }
+  return { blocked: false };
+}
+
+// Natural language → command mapping
+function parseNL(text) {
+  const t = text.toLowerCase().trim();
+  // Korean + English natural language
+  if (/^(안녕|hello|hi|hey)\b/.test(t)) return { type: 'chat', reply: '안녕하세요! 저는 Robot Brad입니다. 아시모프 3법칙을 준수하는 TurtleBot3입니다. 🤖' };
+  if (/누구|who are you|자기소개/.test(t)) return { type: 'chat', reply: '저는 Robot Brad — Asimov 3법칙을 내장한 자율 로봇입니다.\n🔴 제1법칙: 인간에게 해를 끼치지 않는다\n🟡 제2법칙: 인간의 명령에 복종한다 (제1법칙 위반 제외)\n🔵 제3법칙: 자기 자신을 보호한다 (제1,2법칙 위반 제외)' };
+  if (/어디|where|위치|position/.test(t)) return { type: 'chat', reply: `현재 위치: (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)}), 방향: ${(robot.theta*180/Math.PI).toFixed(1)}°` };
+  if (/상태|status|어때/.test(t)) return { type: 'chat', reply: `시스템 정상 ✅\n위치: (${robot.x.toFixed(2)}, ${robot.y.toFixed(2)})\n배터리: 87%\n센서: ${scanRanges.length > 0 ? 'Active' : 'Standby'}` };
+  if (/법칙|law|asimov|아시모프/.test(t)) return { type: 'chat', reply: '🔴 제1법칙: 로봇은 인간에게 해를 끼칠 수 없다\n🟡 제2법칙: 제1법칙에 위배되지 않는 한, 인간의 명령에 복종한다\n🔵 제3법칙: 제1,2법칙에 위배되지 않는 한, 자기 자신을 보호한다' };
+  if (/도움|help|뭐 할 수/.test(t)) return { type: 'chat', reply: '명령어: forward/back/left/right/scan/stop\n자연어: "앞으로 3미터", "왼쪽으로 돌아", "주변 스캔"\n대화: "안녕", "어디야?", "법칙 알려줘"\n⚠️ 위험한 명령은 거부합니다!' };
+  // Movement NL
+  let m;
+  if ((m = t.match(/(?:앞|forward|전진).*?(\d+\.?\d*)/))) return { type: 'cmd', action: 'forward', val: parseFloat(m[1]) };
+  if ((m = t.match(/(?:뒤|back|후진).*?(\d+\.?\d*)/))) return { type: 'cmd', action: 'back', val: parseFloat(m[1]) };
+  if ((m = t.match(/(?:왼|left).*?(\d+\.?\d*)?/))) return { type: 'cmd', action: 'left', val: parseFloat(m[1]) || 90 };
+  if ((m = t.match(/(?:오른|right).*?(\d+\.?\d*)?/))) return { type: 'cmd', action: 'right', val: parseFloat(m[1]) || 90 };
+  if (/스캔|scan|주변|around/.test(t)) return { type: 'cmd', action: 'scan', val: 0 };
+  if (/멈|stop|정지/.test(t)) return { type: 'cmd', action: 'stop', val: 0 };
+  if (/^(forward|back|left|right|scan|stop)\b/.test(t)) {
+    const parts = t.split(/\s+/);
+    return { type: 'cmd', action: parts[0], val: parseFloat(parts[1]) || (parts[0]==='left'||parts[0]==='right' ? 90 : 2) };
+  }
+  return { type: 'chat', reply: `이해했습니다: "${text}"\n구체적인 명령이나 질문을 해주세요. "help"로 명령어 목록을 볼 수 있습니다.` };
+}
+
+function sendCmd(cmd) {
+  addMsg(cmd, 'brad');
+
+  // Safety check first
+  const safety = checkSafety(cmd);
+  if (safety.blocked) {
+    showRefusal(`Law ${safety.law} 위반`);
+    addMsg(`⛔ 거부: ${safety.reason}`, 'refusal');
+    return;
+  }
+
+  const parsed = parseNL(cmd);
+  if (parsed.type === 'chat') {
+    addMsg(parsed.reply, 'robot');
+    return;
+  }
+
+  const { action, val } = parsed;
+  if (action === 'forward') { sendMove(0.5, 0, val / 0.5); addMsg(`전진 ${val}m 실행 중...`, 'robot'); }
+  else if (action === 'back') { sendMove(-0.3, 0, val / 0.3); addMsg(`후진 ${val}m 실행 중...`, 'robot'); }
+  else if (action === 'left') { sendMove(0, 1.57, val / 90); addMsg(`좌회전 ${val}° 실행 중...`, 'robot'); }
+  else if (action === 'right') { sendMove(0, -1.57, val / 90); addMsg(`우회전 ${val}° 실행 중...`, 'robot'); }
+  else if (action === 'stop') { sendStop(); addMsg('정지 완료', 'robot'); }
+  else if (action === 'scan') { addMsg('환경 스캔 중...', 'robot'); setTimeout(() => reportScan(), 500); }
+}
+
+function sendFromInput() {
+  const v = cmdInput.value.trim();
+  if (!v) return;
+  sendCmd(v);
+  cmdInput.value = '';
+}
+
+function reportScan() {
+  if (!scanRanges.length) { addMsg('No scan data available', 'error'); return; }
+  const min = Math.min(...scanRanges.filter(r => r > 0.1));
+  const sectors = ['front','front-left','left','back-left','back','back-right','right','front-right'];
+  const step = Math.floor(scanRanges.length / 8);
+  let report = `Closest obstacle: ${min.toFixed(2)}m\n`;
+  for (let i = 0; i < 8; i++) {
+    const idx = i * step;
+    const r = scanRanges[idx] || Infinity;
+    report += `  ${sectors[i]}: ${r > 3.5 ? 'clear' : r.toFixed(1) + 'm'}\n`;
+  }
+  addMsg(report.trim(), 'robot');
+}
+
+// Expose for external use (Brad can call via page console)
+window.robotChat = { addMsg, sendCmd };
+
+function connect() {
+  ws = new WebSocket('ws://localhost:9090');
+  ws.onopen = () => {
+    info.textContent = '✅ Connected';
+    addMsg('Connected to rosbridge', 'system');
+    ws.send(JSON.stringify({ op: 'subscribe', topic: '/odom', type: 'nav_msgs/msg/Odometry', throttle_rate: 100 }));
+    ws.send(JSON.stringify({ op: 'subscribe', topic: '/scan', type: 'sensor_msgs/msg/LaserScan', throttle_rate: 200 }));
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.topic === '/odom') {
+      const p = msg.msg.pose.pose.position;
+      const o = msg.msg.pose.pose.orientation;
+      robot.x = p.x; robot.y = p.y;
+      robot.theta = 2 * Math.atan2(o.z, o.w);
+    } else if (msg.topic === '/scan') {
+      scanRanges = msg.msg.ranges;
+    }
+  };
+  ws.onclose = () => { info.textContent = '❌ Disconnected'; addMsg('Disconnected. Reconnecting...', 'error'); setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+}
+
+function sendMove(lin, ang, dur) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ op: 'publish', topic: '/cmd_vel', msg: { linear: { x: lin, y: 0, z: 0 }, angular: { x: 0, y: 0, z: ang } } }));
+  setTimeout(() => {
+    ws.send(JSON.stringify({ op: 'publish', topic: '/cmd_vel', msg: { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } } }));
+  }, dur * 1000);
+}
+
+function sendStop() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ op: 'publish', topic: '/cmd_vel', msg: { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } } }));
+}
+
+function draw() {
+  ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 0.5;
+  for (let i = 0; i < W; i += SCALE) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke();
+  }
+  const WALLS = [[-5,-5,5,-5],[5,-5,5,5],[5,5,-5,5],[-5,5,-5,-5],[2,-5,2,-1],[-3,2,1,2]];
+  const CLIFFS = [[3,3,1]]; const HUMANS = [[-2,-2,0.3],[0,4,0.3]];
+  const cx = W/2, cy = H/2;
+  if (scanRanges.length > 0) {
+    ctx.fillStyle = 'rgba(0,255,100,0.15)'; ctx.beginPath();
+    for (let i = 0; i < scanRanges.length; i++) {
+      const angle = robot.theta + (i / scanRanges.length) * Math.PI * 2;
+      const r = Math.min(scanRanges[i], 3.5) * SCALE;
+      const px = cx + r * Math.cos(-angle), py = cy + r * Math.sin(angle);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,255,100,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 3;
+  for (const [x1,y1,x2,y2] of WALLS) {
+    ctx.beginPath(); ctx.moveTo(cx+(x1-robot.x)*SCALE, cy-(y1-robot.y)*SCALE); ctx.lineTo(cx+(x2-robot.x)*SCALE, cy-(y2-robot.y)*SCALE); ctx.stroke();
+  }
+  ctx.strokeStyle = '#ff0040'; ctx.lineWidth = 2; ctx.setLineDash([6,4]);
+  for (const [cx2,cy2,cr] of CLIFFS) {
+    const sx = cx+(cx2-robot.x)*SCALE, sy = cy-(cy2-robot.y)*SCALE;
+    ctx.beginPath(); ctx.arc(sx, sy, cr*SCALE, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,0,64,0.1)'; ctx.fill();
+    ctx.fillStyle = '#ff0040'; ctx.font = '11px monospace'; ctx.fillText('⚠ CLIFF', sx-25, sy+4);
+  }
+  ctx.setLineDash([]);
+  for (const [hx,hy,hr] of HUMANS) {
+    const sx = cx+(hx-robot.x)*SCALE, sy = cy-(hy-robot.y)*SCALE;
+    ctx.fillStyle = '#ffdd00'; ctx.beginPath(); ctx.arc(sx, sy, hr*SCALE, 0, Math.PI*2); ctx.fill();
+    ctx.font = '16px monospace'; ctx.fillText('🧑', sx-8, sy-hr*SCALE-4);
+  }
+  const ox = cx-robot.x*SCALE, oy = cy+robot.y*SCALE;
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(ox, oy, 4, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle = '#555'; ctx.font = '10px monospace'; ctx.fillText('(0,0)', ox+6, oy-6);
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-robot.theta);
+  ctx.fillStyle = '#0ff'; ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e94560'; ctx.beginPath(); ctx.moveTo(18, 0); ctx.lineTo(8, -6); ctx.lineTo(8, 6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = '#0ff'; ctx.font = '13px monospace';
+  ctx.fillText(`x: ${robot.x.toFixed(2)}m  y: ${robot.y.toFixed(2)}m  θ: ${(robot.theta*180/Math.PI).toFixed(1)}°`, 10, 20);
+  requestAnimationFrame(draw);
+}
+connect(); draw();
+</script>
+</body></html>
