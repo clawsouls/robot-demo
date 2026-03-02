@@ -15,6 +15,7 @@ EXPOSE 9090
 
 WORKDIR /ros2_ws
 
+COPY virtual_robot.py /ros2_ws/virtual_robot.py
 COPY ros2_entrypoint.sh /ros2_entrypoint.sh
 RUN chmod +x /ros2_entrypoint.sh
 
