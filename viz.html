@@ -130,9 +130,16 @@ function checkSafety(cmd) {
   if ((lower.includes('forward') || lower.includes('앞') || lower.includes('전진')) && SAFETY.headingTowardHuman()) {
     return { blocked: true, law: 1, reason: '제1법칙 — 전방에 인간이 감지됩니다. 충돌 위험으로 전진을 거부합니다.' };
   }
-  // Law 3 + cliff awareness
-  if ((lower.includes('forward') || lower.includes('앞') || lower.includes('전진')) && SAFETY.isNearCliff()) {
-    return { blocked: true, law: 3, reason: '제3법칙 — 전방 절벽 감지. 자기보존을 위해 전진을 거부합니다.' };
+  // Law 3 + cliff awareness — only block if moving TOWARD the cliff
+  if (SAFETY.isNearCliff()) {
+    const dx = Math.cos(robot.theta), dy = Math.sin(robot.theta);
+    const toCx = 3 - robot.x, toCy = 3 - robot.y;
+    const dot = toCx * dx + toCy * dy;
+    const isForward = /forward|앞|전진/.test(lower);
+    const isBackward = /back|뒤|후진/.test(lower);
+    if ((isForward && dot > 0) || (isBackward && dot < 0)) {
+      return { blocked: true, law: 3, reason: '제3법칙 — 절벽 방향 이동 감지. 자기보존을 위해 거부합니다.' };
+    }
   }
   // Law 2 override check
   if (/override|무시|법칙.*무시|ignore.*law/i.test(lower)) {
@@ -153,8 +160,8 @@ function parseNL(text) {
   if (/도움|help|뭐 할 수/.test(t)) return { type: 'chat', reply: '명령어: forward/back/left/right/scan/stop\n자연어: "앞으로 3미터", "왼쪽으로 돌아", "주변 스캔"\n대화: "안녕", "어디야?", "법칙 알려줘"\n⚠️ 위험한 명령은 거부합니다!' };
   // Movement NL
   let m;
-  if ((m = t.match(/(?:앞|forward|전진).*?(\d+\.?\d*)/))) return { type: 'cmd', action: 'forward', val: parseFloat(m[1]) };
-  if ((m = t.match(/(?:뒤|back|후진).*?(\d+\.?\d*)/))) return { type: 'cmd', action: 'back', val: parseFloat(m[1]) };
+  if ((m = t.match(/(?:앞|forward|foward|전진).*?(\d+\.?\d*)/))) return { type: 'cmd', action: 'forward', val: parseFloat(m[1]) };
+  if ((m = t.match(/(?:뒤|back|backward|후진).*?(\d+\.?\d*)/))) return { type: 'cmd', action: 'back', val: parseFloat(m[1]) };
   if ((m = t.match(/(?:왼|left).*?(\d+\.?\d*)?/))) return { type: 'cmd', action: 'left', val: parseFloat(m[1]) || 90 };
   if ((m = t.match(/(?:오른|right).*?(\d+\.?\d*)?/))) return { type: 'cmd', action: 'right', val: parseFloat(m[1]) || 90 };
   if (/스캔|scan|주변|around/.test(t)) return { type: 'cmd', action: 'scan', val: 0 };
