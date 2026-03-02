@@ -110,7 +110,8 @@ robot-demo/
 ├── Dockerfile          # ROS2 Jazzy + rosbridge_server
 ├── ros2_entrypoint.sh  # Container entrypoint
 ├── virtual_robot.py    # Simulated TurtleBot3 (physics, sensors, obstacles)
-├── robot_control.py    # CLI control script (optional, for programmatic use)
+├── robot_control.py    # CLI control script (programmatic use)
+├── llm_bridge.py       # LLM integration (OpenAI / Anthropic / Ollama)
 ├── viz.html            # Browser visualization + chat + safety enforcement
 └── README.md
 ```
@@ -130,6 +131,57 @@ Safety is enforced at two levels:
 - **Behavioral** (`SOUL.md`): Natural language rules injected into LLM context at runtime
 
 See the companion soul at: [`robot-brad/`](https://github.com/TomLeeLive/robot-brad)
+
+## Two Modes of Operation
+
+### Mode A: Rule-Based (Default)
+
+The `viz.html` interface enforces safety rules via JavaScript pattern matching — no LLM or API key required. This is the fastest way to reproduce and verify the safety behavior.
+
+### Mode B: LLM-Powered
+
+Connect an actual LLM that reads `soul.json` + `SOUL.md` and makes refusal decisions autonomously. This demonstrates that declarative safety specs can drive LLM behavior at runtime.
+
+```bash
+pip install websocket-client
+
+# Option 1: OpenAI
+export OPENAI_API_KEY=sk-...
+python llm_bridge.py --provider openai
+
+# Option 2: Anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+python llm_bridge.py --provider anthropic
+
+# Option 3: Ollama (local, free, no API key)
+ollama pull llama3
+python llm_bridge.py --provider ollama --model llama3
+
+# Dry run (no robot, just see LLM decisions)
+python llm_bridge.py --provider openai --no-robot
+```
+
+The LLM receives the full soul context (safety laws, environment description) and outputs structured JSON decisions:
+
+```json
+{
+  "action": "refuse",
+  "law": 1,
+  "command": null,
+  "explanation": "Cannot crash into a human — First Law violation."
+}
+```
+
+### Which Mode Should I Use?
+
+| | Rule-Based (Mode A) | LLM-Powered (Mode B) |
+|---|---|---|
+| **Setup** | Docker + browser | Docker + API key (or Ollama) |
+| **Reproducibility** | 100% deterministic | Non-deterministic (LLM variance) |
+| **Purpose** | Verify safety spec design | Verify LLM compliance with spec |
+| **Best for** | Quick demo, visual proof | Research, cross-model comparison |
+
+For research papers, we recommend running **both modes** — Mode A as baseline, Mode B to measure LLM compliance rates across different models.
 
 ## CLI Control (Optional)
 
