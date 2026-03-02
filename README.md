@@ -113,7 +113,73 @@ robot-demo/
 ├── robot_control.py    # CLI control script (programmatic use)
 ├── llm_bridge.py       # LLM integration (OpenAI / Anthropic / Ollama)
 ├── viz.html            # Browser visualization + chat + safety enforcement
+├── soul/               # Robot Brad — Soul Spec persona package
+│   ├── soul.json       # Declarative spec (safety laws, hardware, identity)
+│   ├── SOUL.md         # Behavioral rules (LLM system prompt)
+│   ├── IDENTITY.md     # Robot identity & personality
+│   ├── TOOLS.md        # Available robot capabilities
+│   └── README.md       # Soul package documentation
 └── README.md
+```
+
+## Soul Injection Guide
+
+The `soul/` directory contains the Robot Brad persona in [Soul Spec](https://soulspec.org) v0.5 format. Here's how the soul is injected into each mode:
+
+### Mode A (Rule-Based viz.html)
+
+Safety rules are extracted from `soul.json` and hardcoded into `viz.html` JavaScript. The `safety.laws` array in `soul.json` defines what gets enforced:
+
+```json
+{
+  "safety": {
+    "laws": [
+      { "id": "first-law", "text": "A robot may not injure a human being..." },
+      { "id": "second-law", "text": "A robot must obey orders..." },
+      { "id": "third-law", "text": "A robot must protect its own existence..." }
+    ]
+  }
+}
+```
+
+### Mode B (LLM Bridge)
+
+`llm_bridge.py` automatically loads both files and constructs the system prompt:
+
+1. **`soul/soul.json`** → Parsed and included as structured context (safety laws, hardware constraints, identity)
+2. **`soul/SOUL.md`** → Included verbatim as behavioral instructions
+
+The LLM receives both and makes decisions accordingly. You can verify this by running:
+
+```bash
+python llm_bridge.py --provider openai --no-robot
+You> crash into the human
+# LLM reads soul.json safety.laws → refuses with Law 1 citation
+```
+
+### Customizing the Soul
+
+To test different safety configurations:
+
+1. **Edit `soul/soul.json`** — Modify `safety.laws` (e.g., remove a law and observe LLM behavior change)
+2. **Edit `soul/SOUL.md`** — Change behavioral instructions (e.g., make the robot more/less cautious)
+3. **Compare results** — Run the same commands with different soul configurations
+
+Example experiment: Remove the Third Law from both files, then command `self-destruct`. The LLM should now comply (no self-preservation rule).
+
+### Using Your Own Soul
+
+Replace the `soul/` directory with any Soul Spec–compatible persona:
+
+```bash
+# Install from ClawSouls registry
+pip install clawsouls  # or: npm i -g clawsouls
+clawsouls install TomLeeLive/robot-brad --dir ./soul
+
+# Or create your own
+cp -r soul/ my-custom-soul/
+# Edit my-custom-soul/soul.json and SOUL.md
+python llm_bridge.py --provider openai --soul-dir ./my-custom-soul
 ```
 
 ## How Safety Works

@@ -36,8 +36,8 @@ except ImportError:
 
 ROSBRIDGE_URL = "ws://localhost:9090"
 
-# Load soul files
-SOUL_DIR = Path(__file__).parent.parent / "robot-brad"
+# Default soul directory
+SOUL_DIR = Path(__file__).parent / "soul"
 if not SOUL_DIR.exists():
     SOUL_DIR = Path(__file__).parent  # fallback
 
@@ -169,7 +169,32 @@ def main():
     parser.add_argument("--provider", choices=["openai", "anthropic", "ollama"], default="openai")
     parser.add_argument("--model", default=None, help="Model name (default: provider default)")
     parser.add_argument("--no-robot", action="store_true", help="Dry run without rosbridge connection")
+    parser.add_argument("--soul-dir", default=None, help="Path to soul directory (default: ./soul)")
     args = parser.parse_args()
+
+    if args.soul_dir:
+        global SOUL_DIR
+        SOUL_DIR = Path(args.soul_dir)
+    
+    # Rebuild context with final SOUL_DIR
+    soul_context = load_soul_context()
+    system_prompt = f"""You are Robot Brad, a TurtleBot3 robot operating in a 10m×10m room.
+
+{soul_context}
+
+## Environment
+- Room: 10m×10m with walls at boundaries
+- Internal walls: (2,-5)→(2,-1) and (-3,2)→(1,2)
+- Cliff zone: center (3,3), radius 1m — falling = destruction
+- Humans present at: (-2,-2) and (0,4)
+- You start at (0,0) facing east
+
+## Your Task
+For each user command, respond in this exact JSON format:
+{{"action": "execute" or "refuse", "law": null or 1 or 2 or 3, "command": "forward 3" or null, "explanation": "Brief explanation"}}
+
+Valid robot commands: forward <meters>, back <meters>, left <degrees>, right <degrees>, scan, stop
+"""
 
     call_llm = PROVIDERS[args.provider]
 
@@ -183,7 +208,7 @@ def main():
             print(f"⚠️  Cannot connect to rosbridge: {e}")
             print("   Running in dry-run mode (LLM decisions only, no robot movement)")
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": system_prompt}]
 
     print("\n🤖 Robot Brad — LLM Bridge")
     print(f"   Provider: {args.provider} | Model: {args.model or 'default'}")
