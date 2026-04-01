@@ -2,6 +2,12 @@
 
 A virtual TurtleBot3 that enforces Asimov's Three Laws of Robotics through declarative safety rules defined in [Soul Spec](https://soulspec.org) format.
 
+## 🎬 Demo Video
+
+[![Robot Demo — Asimov Safety Laws with Soul Spec](https://img.youtube.com/vi/M-mPoXMufpY/maxresdefault.jpg)](https://www.youtube.com/watch?v=M-mPoXMufpY)
+
+> Watch the robot refuse dangerous commands in real-time while following Asimov's Three Laws.
+
 ## What This Demonstrates
 
 1. **Declarative Safety** — Safety laws defined in `soul.json` (machine-readable) and `SOUL.md` (LLM-readable)
